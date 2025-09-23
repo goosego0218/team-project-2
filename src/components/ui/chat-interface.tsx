@@ -8,7 +8,7 @@ import { Send, Bot, User, Heart } from "lucide-react";
 interface Message {
   id: string;
   text: string;
-  sender: 'user' | 'ai';
+  sender: "user" | "ai";
   timestamp: Date;
   emotionScore?: {
     anxiety: number;
@@ -17,16 +17,18 @@ interface Message {
   };
 }
 
+const API_BASE = import.meta.env.VITE_API_BASE ?? "http://localhost:5000";
+
 export function ChatInterface() {
   const [messages, setMessages] = useState<Message[]>([
     {
-      id: '1',
-      text: '안녕하세요! 저는 당신의 마음 건강을 돌보는 AI 상담사입니다. 오늘 기분은 어떠신가요?',
-      sender: 'ai',
+      id: "1",
+      text: "안녕하세요! 저는 당신의 마음 건강을 돌보는 AI 상담사입니다. 오늘 기분은 어떠신가요?",
+      sender: "ai",
       timestamp: new Date(),
-    }
+    },
   ]);
-  const [inputValue, setInputValue] = useState('');
+  const [inputValue, setInputValue] = useState("");
   const [isTyping, setIsTyping] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -45,34 +47,67 @@ export function ChatInterface() {
     const userMessage: Message = {
       id: Date.now().toString(),
       text: inputValue,
-      sender: 'user',
+      sender: "user",
       timestamp: new Date(),
     };
 
-    setMessages(prev => [...prev, userMessage]);
-    setInputValue('');
+    setMessages((prev) => [...prev, userMessage]);
+    setInputValue("");
     setIsTyping(true);
 
-    // Simulate AI response (replace with actual Flask backend call)
-    setTimeout(() => {
+    try {
+      const res = await fetch(`${API_BASE}/api/chat`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        // 백엔드에서 message(string)만 받도록 구현했음
+        body: JSON.stringify({ message: userMessage.text }),
+      });
+
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+
+      type ChatResp = {
+        reply: string;
+        scores?: { anxiety: number; depression: number; stress: number }; // 0~1
+      };
+
+      const data: ChatResp = await res.json();
+
       const aiResponse: Message = {
         id: (Date.now() + 1).toString(),
-        text: '당신의 감정을 이해합니다. 더 자세히 말씀해 주실 수 있나요? 어떤 상황에서 그런 기분을 느끼셨는지 궁금합니다.',
-        sender: 'ai',
+        text: data.reply ?? "응답 생성에 문제가 발생했습니다.",
+        sender: "ai",
         timestamp: new Date(),
-        emotionScore: {
-          anxiety: Math.random() * 0.3 + 0.2,
-          depression: Math.random() * 0.4 + 0.1,
-          stress: Math.random() * 0.5 + 0.2,
-        }
+        emotionScore: data.scores
+          ? {
+              anxiety: clamp01(data.scores.anxiety),
+              depression: clamp01(data.scores.depression),
+              stress: clamp01(data.scores.stress),
+            }
+          : undefined,
       };
-      setMessages(prev => [...prev, aiResponse]);
+
+      setMessages((prev) => [...prev, aiResponse]);
+    } catch (err) {
+      console.error(err);
+      const failMsg: Message = {
+        id: (Date.now() + 2).toString(),
+        text:
+          "죄송합니다. 서버와 통신 중 문제가 발생했어요. 잠시 후 다시 시도해 주세요.",
+        sender: "ai",
+        timestamp: new Date(),
+      };
+      setMessages((prev) => [...prev, failMsg]);
+    } finally {
       setIsTyping(false);
-    }, 1500);
+    }
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSendMessage();
     }
@@ -112,23 +147,28 @@ export function ChatInterface() {
                   <div
                     key={message.id}
                     className={`flex gap-3 animate-gentle-fade ${
-                      message.sender === 'user' ? 'justify-end' : 'justify-start'
+                      message.sender === "user" ? "justify-end" : "justify-start"
                     }`}
                   >
-                    {message.sender === 'ai' && (
+                    {message.sender === "ai" && (
                       <div className="w-8 h-8 bg-primary rounded-full flex items-center justify-center flex-shrink-0">
                         <Bot className="h-4 w-4 text-white" />
                       </div>
                     )}
-                    
-                    <div className={`chat-bubble ${
-                      message.sender === 'user' ? 'chat-bubble-user' : 'chat-bubble-ai'
-                    }`}>
+
+                    <div
+                      className={`chat-bubble ${
+                        message.sender === "user" ? "chat-bubble-user" : "chat-bubble-ai"
+                      }`}
+                    >
                       <p className="text-sm leading-relaxed">{message.text}</p>
                       <div className="text-xs opacity-70 mt-2">
-                        {message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        {message.timestamp.toLocaleTimeString([], {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
                       </div>
-                      
+
                       {/* Emotion indicators for AI messages */}
                       {message.emotionScore && (
                         <div className="mt-3 p-2 bg-background/50 rounded-lg">
@@ -142,24 +182,25 @@ export function ChatInterface() {
                               <span>{Math.round(message.emotionScore.anxiety * 100)}%</span>
                             </div>
                             <div className="w-full bg-background rounded-full h-1">
-                              <div 
+                              <div
                                 className="bg-anxious h-1 rounded-full transition-all duration-500"
                                 style={{ width: `${message.emotionScore.anxiety * 100}%` }}
                               ></div>
                             </div>
+                            {/* 필요하면 우울/스트레스 게이지도 같은 패턴으로 추가 */}
                           </div>
                         </div>
                       )}
                     </div>
 
-                    {message.sender === 'user' && (
+                    {message.sender === "user" && (
                       <div className="w-8 h-8 bg-secondary-accent rounded-full flex items-center justify-center flex-shrink-0">
                         <User className="h-4 w-4 text-white" />
                       </div>
                     )}
                   </div>
                 ))}
-                
+
                 {/* Typing indicator */}
                 {isTyping && (
                   <div className="flex gap-3 animate-gentle-fade">
@@ -169,8 +210,14 @@ export function ChatInterface() {
                     <div className="chat-bubble chat-bubble-ai">
                       <div className="flex gap-1">
                         <div className="w-2 h-2 bg-primary rounded-full animate-pulse"></div>
-                        <div className="w-2 h-2 bg-primary rounded-full animate-pulse" style={{ animationDelay: '0.2s' }}></div>
-                        <div className="w-2 h-2 bg-primary rounded-full animate-pulse" style={{ animationDelay: '0.4s' }}></div>
+                        <div
+                          className="w-2 h-2 bg-primary rounded-full animate-pulse"
+                          style={{ animationDelay: "0.2s" }}
+                        ></div>
+                        <div
+                          className="w-2 h-2 bg-primary rounded-full animate-pulse"
+                          style={{ animationDelay: "0.4s" }}
+                        ></div>
                       </div>
                     </div>
                   </div>
@@ -208,4 +255,9 @@ export function ChatInterface() {
       </div>
     </section>
   );
+}
+
+function clamp01(x: number | undefined): number {
+  if (typeof x !== "number" || Number.isNaN(x)) return 0;
+  return Math.max(0, Math.min(1, x));
 }
