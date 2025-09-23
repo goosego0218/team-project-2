@@ -1,4 +1,9 @@
 flask
 flask-cors
-openai
 python-dotenv
+langgraph
+langchain-openai
+langchain-core
+pydantic
+tavily-python
+langchain-community

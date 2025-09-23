@@ -1,20 +1,18 @@
+// src/components/ui/chat-interface.tsx
 import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Send, Bot, User, Heart } from "lucide-react";
+import { Send, Bot, User } from "lucide-react";
 
 interface Message {
   id: string;
   text: string;
   sender: "user" | "ai";
   timestamp: Date;
-  emotionScore?: {
-    anxiety: number;
-    depression: number;
-    stress: number;
-  };
+  meta?: { crisis: boolean; end_session: boolean; need_summary: boolean };
+  searchResult?: any; // 검색 결과 JSON 배열
 }
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "http://localhost:5000";
@@ -30,8 +28,8 @@ export function ChatInterface() {
   ]);
   const [inputValue, setInputValue] = useState("");
   const [isTyping, setIsTyping] = useState(false);
+  const [threadId, setThreadId] = useState<string | undefined>();
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -56,57 +54,49 @@ export function ChatInterface() {
     setIsTyping(true);
 
     try {
+      const body: any = { message: userMessage.text };
+      if (threadId) body.thread_id = threadId;
+
       const res = await fetch(`${API_BASE}/api/chat`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        // 백엔드에서 message(string)만 받도록 구현했음
-        body: JSON.stringify({ message: userMessage.text }),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
       });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}`);
-      }
-
-      type ChatResp = {
-        reply: string;
-        scores?: { anxiety: number; depression: number; stress: number }; // 0~1
-      };
-
-      const data: ChatResp = await res.json();
+      // HERMES 백엔드 응답
+      const data = await res.json();
+      if (data.thread_id) setThreadId(data.thread_id);
 
       const aiResponse: Message = {
         id: (Date.now() + 1).toString(),
         text: data.reply ?? "응답 생성에 문제가 발생했습니다.",
         sender: "ai",
         timestamp: new Date(),
-        emotionScore: data.scores
-          ? {
-              anxiety: clamp01(data.scores.anxiety),
-              depression: clamp01(data.scores.depression),
-              stress: clamp01(data.scores.stress),
-            }
-          : undefined,
+        meta: data.meta,
+        searchResult: data.search_result,
       };
 
       setMessages((prev) => [...prev, aiResponse]);
+
+      // ✅ 여기서 대시보드 새로고침 (백엔드 통계가 갱신된 후)
+      window.dispatchEvent(new CustomEvent("dashboard:refresh"));
     } catch (err) {
       console.error(err);
       const failMsg: Message = {
         id: (Date.now() + 2).toString(),
-        text:
-          "죄송합니다. 서버와 통신 중 문제가 발생했어요. 잠시 후 다시 시도해 주세요.",
+        text: "죄송합니다. 서버와 통신 중 문제가 발생했어요. 잠시 후 다시 시도해 주세요.",
         sender: "ai",
         timestamp: new Date(),
       };
       setMessages((prev) => [...prev, failMsg]);
+      // 실패 시에는 대시보드 갱신 불필요
     } finally {
       setIsTyping(false);
     }
   };
 
-  const handleKeyPress = (e: React.KeyboardEvent) => {
+  const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSendMessage();
@@ -169,26 +159,26 @@ export function ChatInterface() {
                         })}
                       </div>
 
-                      {/* Emotion indicators for AI messages */}
-                      {message.emotionScore && (
-                        <div className="mt-3 p-2 bg-background/50 rounded-lg">
-                          <div className="text-xs font-medium mb-2 flex items-center gap-1">
-                            <Heart className="h-3 w-3" />
-                            감정 분석
-                          </div>
-                          <div className="space-y-1">
-                            <div className="flex justify-between text-xs">
-                              <span>불안</span>
-                              <span>{Math.round(message.emotionScore.anxiety * 100)}%</span>
+                      {/* HERMES search result display */}
+                      {message.searchResult && Array.isArray(message.searchResult) && (
+                        <div className="mt-3 p-2 bg-background/50 rounded-lg text-xs space-y-2">
+                          {message.searchResult.map((item: any, idx: number) => (
+                            <div key={idx} className="border p-2 rounded">
+                              <div>기관명: {item.기관명}</div>
+                              <div>주소: {item.주소}</div>
+                              {item.연락처 && <div>연락처: {item.연락처}</div>}
+                              {item.source_url && (
+                                <a
+                                  href={item.source_url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-blue-500 underline"
+                                >
+                                  상세보기
+                                </a>
+                              )}
                             </div>
-                            <div className="w-full bg-background rounded-full h-1">
-                              <div
-                                className="bg-anxious h-1 rounded-full transition-all duration-500"
-                                style={{ width: `${message.emotionScore.anxiety * 100}%` }}
-                              ></div>
-                            </div>
-                            {/* 필요하면 우울/스트레스 게이지도 같은 패턴으로 추가 */}
-                          </div>
+                          ))}
                         </div>
                       )}
                     </div>
@@ -210,14 +200,8 @@ export function ChatInterface() {
                     <div className="chat-bubble chat-bubble-ai">
                       <div className="flex gap-1">
                         <div className="w-2 h-2 bg-primary rounded-full animate-pulse"></div>
-                        <div
-                          className="w-2 h-2 bg-primary rounded-full animate-pulse"
-                          style={{ animationDelay: "0.2s" }}
-                        ></div>
-                        <div
-                          className="w-2 h-2 bg-primary rounded-full animate-pulse"
-                          style={{ animationDelay: "0.4s" }}
-                        ></div>
+                        <div className="w-2 h-2 bg-primary rounded-full animate-pulse" style={{ animationDelay: "0.2s" }}></div>
+                        <div className="w-2 h-2 bg-primary rounded-full animate-pulse" style={{ animationDelay: "0.4s" }}></div>
                       </div>
                     </div>
                   </div>
@@ -230,10 +214,9 @@ export function ChatInterface() {
             <div className="p-6 border-t">
               <div className="flex gap-3">
                 <Input
-                  ref={inputRef}
                   value={inputValue}
                   onChange={(e) => setInputValue(e.target.value)}
-                  onKeyPress={handleKeyPress}
+                  onKeyDown={handleKeyDown}
                   placeholder="마음 편히 이야기해 주세요..."
                   className="flex-1 border-border/50 focus:border-primary transition-colors"
                   disabled={isTyping}
@@ -255,9 +238,4 @@ export function ChatInterface() {
       </div>
     </section>
   );
-}
-
-function clamp01(x: number | undefined): number {
-  if (typeof x !== "number" || Number.isNaN(x)) return 0;
-  return Math.max(0, Math.min(1, x));
 }
