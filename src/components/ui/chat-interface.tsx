@@ -1,4 +1,3 @@
-// src/components/ui/chat-interface.tsx
 import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -29,10 +28,23 @@ export function ChatInterface() {
   const [inputValue, setInputValue] = useState("");
   const [isTyping, setIsTyping] = useState(false);
   const [threadId, setThreadId] = useState<string | undefined>();
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null); // ✅ 입력창 ref
+
+  // ✅ 스크롤 락 유틸 (윈도우 스크롤 점프 방지)
+  const withViewportLock = (fn: () => void) => {
+    const y = window.scrollY;
+    fn();
+    // 렌더 사이클마다 몇 번 복원 (레이아웃 리플로우/포커스 이동 대응)
+    requestAnimationFrame(() => window.scrollTo({ top: y }));
+    setTimeout(() => window.scrollTo({ top: y }), 0);
+    setTimeout(() => window.scrollTo({ top: y }), 60);
+  };
 
   const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    // 채팅 영역 내부만 스크롤 (window가 아니라)
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   };
 
   useEffect(() => {
@@ -40,7 +52,7 @@ export function ChatInterface() {
   }, [messages]);
 
   const handleSendMessage = async () => {
-    if (!inputValue.trim()) return;
+    if (!inputValue.trim() || isTyping) return;
 
     const userMessage: Message = {
       id: Date.now().toString(),
@@ -49,8 +61,11 @@ export function ChatInterface() {
       timestamp: new Date(),
     };
 
-    setMessages((prev) => [...prev, userMessage]);
-    setInputValue("");
+    // ✅ 메시지 추가 & 입력창 비우기/포커스 유지(스크롤 방지)
+    withViewportLock(() => {
+      setMessages((prev) => [...prev, userMessage]);
+      setInputValue("");
+    });
     setIsTyping(true);
 
     try {
@@ -64,7 +79,6 @@ export function ChatInterface() {
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
-      // HERMES 백엔드 응답
       const data = await res.json();
       if (data.thread_id) setThreadId(data.thread_id);
 
@@ -77,22 +91,36 @@ export function ChatInterface() {
         searchResult: data.search_result,
       };
 
-      setMessages((prev) => [...prev, aiResponse]);
+      // ✅ 응답 메시지 추가도 스크롤 락
+      withViewportLock(() => {
+        setMessages((prev) => [...prev, aiResponse]);
+      });
 
-      // ✅ 여기서 대시보드 새로고침 (백엔드 통계가 갱신된 후)
+      // ✅ 대시보드 갱신 이벤트 (페이지 이동 없음)
       window.dispatchEvent(new CustomEvent("dashboard:refresh"));
+      // 미세 타이밍 보정
+      Promise.resolve().then(() =>
+        window.dispatchEvent(new CustomEvent("dashboard:refresh"))
+      );
+      setTimeout(
+        () => window.dispatchEvent(new CustomEvent("dashboard:refresh")),
+        50
+      );
     } catch (err) {
       console.error(err);
-      const failMsg: Message = {
-        id: (Date.now() + 2).toString(),
-        text: "죄송합니다. 서버와 통신 중 문제가 발생했어요. 잠시 후 다시 시도해 주세요.",
-        sender: "ai",
-        timestamp: new Date(),
-      };
-      setMessages((prev) => [...prev, failMsg]);
-      // 실패 시에는 대시보드 갱신 불필요
+      withViewportLock(() => {
+        const failMsg: Message = {
+          id: (Date.now() + 2).toString(),
+          text: "죄송합니다. 서버와 통신 중 문제가 발생했어요. 잠시 후 다시 시도해 주세요.",
+          sender: "ai",
+          timestamp: new Date(),
+        };
+        setMessages((prev) => [...prev, failMsg]);
+      });
     } finally {
       setIsTyping(false);
+      // ✅ 포커스 유지 + 스크롤 방지
+      inputRef.current?.focus({ preventScroll: true });
     }
   };
 
@@ -214,6 +242,7 @@ export function ChatInterface() {
             <div className="p-6 border-t">
               <div className="flex gap-3">
                 <Input
+                  ref={inputRef} // ✅ ref 연결
                   value={inputValue}
                   onChange={(e) => setInputValue(e.target.value)}
                   onKeyDown={handleKeyDown}
@@ -222,6 +251,7 @@ export function ChatInterface() {
                   disabled={isTyping}
                 />
                 <Button
+                  type="button" // ✅ 안전하게 버튼으로 고정
                   onClick={handleSendMessage}
                   disabled={!inputValue.trim() || isTyping}
                   className="bg-primary hover:bg-primary/90 shadow-sm"

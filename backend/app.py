@@ -32,7 +32,7 @@ except Exception:
 # -----------------------------------------------------------------------------
 load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")  # 없으면 검색 노드는 동작 안 할 수 있음
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")  
 
 if not OPENAI_API_KEY:
     raise RuntimeError("OPENAI_API_KEY is required in backend/.env")
